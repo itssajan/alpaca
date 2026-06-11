@@ -33,24 +33,24 @@ jobs:
       - name: Ad-hoc sign the app
         run: codesign --force --deep --sign - Alpaca.app
 
-      - name: Create Install.command script
-        run: |
-          cat > Install.command << 'EOF'
-          #!/bin/bash
-          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-          echo "Installing Alpaca to /Applications..."
-          cp -r "$SCRIPT_DIR/Alpaca.app" /Applications/
-          xattr -rd com.apple.quarantine /Applications/Alpaca.app 2>/dev/null || true
-          echo "Done. Launching Alpaca..."
-          open /Applications/Alpaca.app
-          EOF
-          chmod +x Install.command
-
       - name: Stage DMG contents
         run: |
           mkdir dmg_src
           cp -r Alpaca.app dmg_src/
-          cp Install.command dmg_src/
+          cat > dmg_src/README.txt << 'EOF'
+          Alpaca — Installation
+
+          1. Drag Alpaca.app to your Applications folder.
+
+          2. Open Terminal and run:
+             xattr -rd com.apple.quarantine /Applications/Alpaca.app
+
+          3. Launch Alpaca from Applications.
+
+          Why step 2? macOS quarantines apps downloaded from the internet
+          that are not signed with a paid Apple Developer certificate.
+          The xattr command removes that quarantine flag.
+          EOF
 
       - name: Create DMG
         run: |
