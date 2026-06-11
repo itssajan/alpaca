@@ -30,14 +30,36 @@ jobs:
       - name: Build .app bundle
         run: ~/go/bin/fyne package -os darwin -name Alpaca -appID com.itssajan.alpaca -icon ui/icon.png
 
+      - name: Ad-hoc sign the app
+        run: codesign --force --deep --sign - Alpaca.app
+
+      - name: Create Install.command script
+        run: |
+          cat > Install.command << 'EOF'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          echo "Installing Alpaca to /Applications..."
+          cp -r "$SCRIPT_DIR/Alpaca.app" /Applications/
+          xattr -rd com.apple.quarantine /Applications/Alpaca.app 2>/dev/null || true
+          echo "Done. Launching Alpaca..."
+          open /Applications/Alpaca.app
+          EOF
+          chmod +x Install.command
+
+      - name: Stage DMG contents
+        run: |
+          mkdir dmg_src
+          cp -r Alpaca.app dmg_src/
+          cp Install.command dmg_src/
+
       - name: Create DMG
         run: |
           create-dmg \
             --volname "Alpaca" \
-            --window-size 400 200 \
-            --app-drop-link 300 100 \
+            --window-size 540 300 \
+            --app-drop-link 380 140 \
             "Alpaca-${{ github.ref_name }}-macos.dmg" \
-            "Alpaca.app"
+            "dmg_src/"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
