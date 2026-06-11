@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Install Fyne CLI
+        run: go install fyne.io/fyne/v2/cmd/fyne@latest
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Build .app bundle
+        run: ~/go/bin/fyne package -os darwin -name Alpaca -appID com.itssajan.alpaca -icon ui/icon.png
+
+      - name: Create DMG
+        run: |
+          create-dmg \
+            --volname "Alpaca" \
+            --window-size 400 200 \
+            --app-drop-link 300 100 \
+            "Alpaca-${{ github.ref_name }}-macos.dmg" \
+            "Alpaca.app"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Alpaca-${{ github.ref_name }}-macos.dmg
+          generate_release_notes: true
+
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Install MinGW (CGo for Fyne)
+        run: choco install mingw -y
+
+      - name: Build EXE
+        shell: bash
+        env:
+          CGO_ENABLED: '1'
+          CC: gcc
+        run: |
+          go build \
+            -ldflags="-H windowsgui" \
+            -o "Alpaca-${{ github.ref_name }}-windows-amd64.exe" \
+            .
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Alpaca-${{ github.ref_name }}-windows-amd64.exe
+          generate_release_notes: true
