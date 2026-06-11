@@ -14,6 +14,8 @@ import (
 type Mover struct {
 	enabled      atomic.Bool
 	lastUserMove atomic.Int64 // unix nano
+	alpacaMoving atomic.Int32 // counter: >0 means Alpaca is moving cursor
+	nextMoveAt   atomic.Int64 // unix nano of next scheduled move
 	configCh     chan config.Config
 	mu           sync.Mutex
 	cancel       context.CancelFunc
@@ -27,7 +29,6 @@ func New() *Mover {
 	return m
 }
 
-// Start launches the idle-detection and scheduler goroutines.
 func (m *Mover) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()
@@ -38,7 +39,6 @@ func (m *Mover) Start() {
 	go m.scheduler(ctx)
 }
 
-// Stop shuts down all goroutines.
 func (m *Mover) Stop() {
 	m.mu.Lock()
 	if m.cancel != nil {
@@ -47,22 +47,41 @@ func (m *Mover) Stop() {
 	m.mu.Unlock()
 }
 
-// SetEnabled toggles the mover on/off without stopping goroutines.
 func (m *Mover) SetEnabled(v bool) {
 	m.enabled.Store(v)
 }
 
-// Enabled returns current enabled state.
 func (m *Mover) Enabled() bool {
 	return m.enabled.Load()
 }
 
-// ReloadConfig sends a new config to the running scheduler.
+// IsUserActive returns true if real user mouse activity was detected within the
+// configured quiet period. Always false when Alpaca itself is moving.
+func (m *Mover) IsUserActive() bool {
+	cfg := config.Get()
+	quiet := time.Duration(cfg.Idle.QuietPeriodSeconds) * time.Second
+	last := time.Unix(0, m.lastUserMove.Load())
+	return time.Since(last) < quiet
+}
+
+// NextMoveIn returns how long until the next scheduled move fires.
+// Returns 0 if already past due or unknown.
+func (m *Mover) NextMoveIn() time.Duration {
+	at := time.Unix(0, m.nextMoveAt.Load())
+	if at.IsZero() {
+		return 0
+	}
+	d := time.Until(at)
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
 func (m *Mover) ReloadConfig(cfg config.Config) {
 	select {
 	case m.configCh <- cfg:
 	default:
-		// drain stale update and replace
 		select {
 		case <-m.configCh:
 		default:
@@ -71,15 +90,15 @@ func (m *Mover) ReloadConfig(cfg config.Config) {
 	}
 }
 
-// MoveNow triggers an immediate movement regardless of schedule.
 func (m *Mover) MoveNow() {
 	go func() {
+		m.alpacaMoving.Add(1)
+		defer m.alpacaMoving.Add(-1)
 		cfg := config.Get()
 		execPattern(cfg)
 	}()
 }
 
-// pollUserActivity tracks the last time the real user moved the mouse.
 func (m *Mover) pollUserActivity(ctx context.Context) {
 	px, py := robotgo.Location()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -90,20 +109,22 @@ func (m *Mover) pollUserActivity(ctx context.Context) {
 			return
 		case <-ticker.C:
 			cx, cy := robotgo.Location()
-			if cx != px || cy != py {
+			dx, dy := cx-px, cy-py
+			// ignore sub-pixel jitter (<5px) and Alpaca's own movements
+			if m.alpacaMoving.Load() == 0 && dx*dx+dy*dy >= 25 {
 				m.lastUserMove.Store(time.Now().UnixNano())
-				px, py = cx, cy
 			}
+			px, py = cx, cy
 		}
 	}
 }
 
-// scheduler fires movement patterns at randomized intervals.
 func (m *Mover) scheduler(ctx context.Context) {
 	cfg := config.Get()
 
 	for {
 		delay := randomInterval(cfg.Interval.MinSeconds, cfg.Interval.MaxSeconds)
+		m.nextMoveAt.Store(time.Now().Add(delay).UnixNano())
 		timer := time.NewTimer(delay)
 
 		select {
@@ -117,18 +138,22 @@ func (m *Mover) scheduler(ctx context.Context) {
 		case <-timer.C:
 		}
 
+		m.nextMoveAt.Store(0)
+
 		if !m.enabled.Load() {
 			continue
 		}
 
-		// skip if user was active within quiet period
+		cfg = config.Get()
 		quiet := time.Duration(cfg.Idle.QuietPeriodSeconds) * time.Second
 		last := time.Unix(0, m.lastUserMove.Load())
 		if time.Since(last) < quiet {
 			continue
 		}
 
+		m.alpacaMoving.Add(1)
 		execPattern(cfg)
+		m.alpacaMoving.Add(-1)
 	}
 }
 

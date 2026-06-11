@@ -32,7 +32,7 @@ type Config struct {
 
 var defaults = Config{
 	Interval: Interval{MinSeconds: 30, MaxSeconds: 300},
-	Idle:     Idle{QuietPeriodSeconds: 3},
+	Idle:     Idle{QuietPeriodSeconds: 1},
 	Movement: Movement{JitterWeight: 30, DriftWeight: 30, WanderWeight: 40},
 }
 
